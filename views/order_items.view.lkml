@@ -1,5 +1,5 @@
 view: order_items {
-  sql_table_name: `looker.order_items` ;;
+  sql_table_name: `@{schema_name}.order_items` ;;
   drill_fields: [id]
 
   dimension: id {

@@ -10,3 +10,8 @@ constant: model_name {
   value: "base_project"
   export: override_required
 }
+
+constant: schema_name {
+  value: "looker-private-demo.ecomm"
+  export: override_required
+}

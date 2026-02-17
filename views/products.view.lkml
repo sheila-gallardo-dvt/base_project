@@ -1,5 +1,5 @@
 view: products {
-  sql_table_name: `looker.products` ;;
+  sql_table_name: `@{schema_name}.products` ;;
   drill_fields: [id]
 
   dimension: id {

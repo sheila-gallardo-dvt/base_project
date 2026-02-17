@@ -1,5 +1,5 @@
 view: users {
-  sql_table_name: `looker.users` ;;
+  sql_table_name: `@{schema_name}.users` ;;
   drill_fields: [id]
 
   dimension: id {
