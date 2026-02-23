@@ -3,6 +3,7 @@
   title: Order Overview
   preferred_viewer: dashboards-next
   description: Dashboard resumen de pedidos
+  theme_name: ''
   layout: newspaper
   tabs:
   - name: ''
@@ -99,25 +100,6 @@
     col: 18
     width: 6
     height: 4
-    tab_name: ''
-  - title: Revenue by Status
-    name: Revenue by Status
-    model: "@{model_name}"
-    explore: order_items
-    type: looker_pie
-    fields: [order_items.status, order_items.total_sale_price]
-    sorts: [order_items.total_sale_price desc]
-    limit: 500
-    value_labels: legend
-    label_type: labPer
-    defaults_version: 1
-    listen:
-      Status: order_items.status
-      Date: order_items.created_date
-    row: 4
-    col: 0
-    width: 12
-    height: 8
     tab_name: ''
   - title: Orders Over Time
     name: Orders Over Time
