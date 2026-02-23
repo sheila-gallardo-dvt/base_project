@@ -160,16 +160,23 @@ def looker_action(request):
         if method == "GET":
             return _action_list()
 
-        # POST → Distinguir entre form y execute por el contenido
+        # POST → Distinguir entre test, form y execute por el contenido
         if method == "POST":
             # Si tiene form_params → es una ejecución
             if "form_params" in body:
                 print(f"[ACTION HUB] EXECUTE: form_params={body['form_params']}", file=sys.stderr)
                 return _action_execute(body)
 
-            # Si no tiene form_params → es un request de formulario
-            print("[ACTION HUB] FORM request", file=sys.stderr)
-            return _action_form()
+            # Si tiene data/scheduled_plan → Looker pide el formulario
+            if "data" in body or "scheduled_plan" in body:
+                print("[ACTION HUB] FORM request", file=sys.stderr)
+                return _action_form()
+
+            # Body vacío → Test de conectividad de Looker
+            print("[ACTION HUB] TEST (empty body) → OK", file=sys.stderr)
+            return _json_response({
+                "looker": {"success": True, "message": "Action Hub conectado correctamente."}
+            })
 
         return _json_response({"error": "Method not allowed"}, 405)
 
