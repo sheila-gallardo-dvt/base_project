@@ -44,18 +44,18 @@ def extract_dashboard_name(lookml: str) -> str:
 
 def remove_id_and_slug(lookml: str) -> str:
     """
-    Elimina las líneas de 'id:' y 'slug:' del dashboard LookML.
+    Elimina las líneas de 'id:', 'slug:' y 'preferred_slug:' del dashboard LookML.
     Esto permite que Looker mantenga los valores previos al importar.
     
-    Solo elimina id/slug a nivel de dashboard (indentación de 2 espacios),
+    Solo elimina id/slug/preferred_slug a nivel de dashboard (indentación de 2 espacios),
     no dentro de los elements u otros bloques anidados.
     """
     lines = lookml.split("\n")
     filtered = []
     for line in lines:
         stripped = line.strip()
-        # Eliminar líneas de id y slug a nivel del dashboard (indent ~2-4 espacios)
-        if re.match(r"^\s{2,4}(id|slug)\s*:", line):
+        # Eliminar líneas de id, slug y preferred_slug a nivel del dashboard (indent ~2-4 espacios)
+        if re.match(r"^\s{2,4}(id|slug|preferred_slug)\s*:", line):
             continue
         filtered.append(line)
     return "\n".join(filtered)
