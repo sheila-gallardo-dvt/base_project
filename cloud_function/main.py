@@ -57,17 +57,17 @@ def trigger_github_workflow(dashboard_id: str) -> dict:
 
 def _get_base_url(request):
     """Construye la URL base HTTPS de esta Cloud Function."""
-    # Usar X-Forwarded-Proto si está disponible (Cloud Run/Functions lo envía)
-    proto = request.headers.get("X-Forwarded-Proto", "https")
-    host = request.headers.get("Host", request.host)
-    # Obtener la ruta raíz de la función (sin /form, /execute, etc.)
-    path = request.path.rstrip("/")
+    # request.url contiene la URL completa incluyendo el nombre de la función
+    url = request.url.split("?")[0].rstrip("/")  # quitar query params y trailing slash
     # Quitar subfijos conocidos para obtener la base
-    for suffix in ("/form", "/execute", "/action_list"):
-        if path.endswith(suffix):
-            path = path[: -len(suffix)]
+    for suffix in ("/form", "/execute"):
+        if url.endswith(suffix):
+            url = url[: -len(suffix)]
             break
-    return f"{proto}://{host}{path}"
+    # Forzar HTTPS (Cloud Functions usa HTTP internamente pero está detrás de HTTPS)
+    if url.startswith("http://"):
+        url = "https://" + url[7:]
+    return url
 
 
 def _json_response(data, status=200):
