@@ -172,11 +172,9 @@ def looker_action(request):
                 print("[ACTION HUB] FORM request", file=sys.stderr)
                 return _action_form()
 
-            # Body vacío → Test de conectividad de Looker
-            print("[ACTION HUB] TEST (empty body) → OK", file=sys.stderr)
-            return _json_response({
-                "looker": {"success": True, "message": "Action Hub conectado correctamente."}
-            })
+            # Body vacío → Looker descubriendo integraciones (puede ser GET o POST)
+            print("[ACTION HUB] Discovery via POST (empty body)", file=sys.stderr)
+            return _action_list()
 
         return _json_response({"error": "Method not allowed"}, 405)
 
