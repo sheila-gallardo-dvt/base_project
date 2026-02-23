@@ -14,6 +14,7 @@ Variables de entorno requeridas:
 
 import json
 import os
+import sys
 
 import functions_framework
 import requests
@@ -54,6 +55,30 @@ def trigger_github_workflow(dashboard_id: str) -> dict:
         }
 
 
+def _get_base_url(request):
+    """Construye la URL base HTTPS de esta Cloud Function."""
+    # Usar X-Forwarded-Proto si está disponible (Cloud Run/Functions lo envía)
+    proto = request.headers.get("X-Forwarded-Proto", "https")
+    host = request.headers.get("Host", request.host)
+    # Obtener la ruta raíz de la función (sin /form, /execute, etc.)
+    path = request.path.rstrip("/")
+    # Quitar subfijos conocidos para obtener la base
+    for suffix in ("/form", "/execute", "/action_list"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return f"{proto}://{host}{path}"
+
+
+def _json_response(data, status=200):
+    """Helper para devolver JSON con headers correctos."""
+    return (
+        json.dumps(data),
+        status,
+        {"Content-Type": "application/json"},
+    )
+
+
 # ──────────────────────────────────────────────
 # Endpoint principal: Looker Action Hub
 # ──────────────────────────────────────────────
@@ -62,23 +87,28 @@ def trigger_github_workflow(dashboard_id: str) -> dict:
 def looker_action(request):
     """
     Maneja los requests del Looker Action Hub.
-    
-    Looker envía diferentes tipos de requests:
-    - GET  /                → Action Hub listing
-    - POST /form            → Formulario dinámico
-    - POST /execute         → Ejecución de la acción
+
+    Looker puede enviar:
+    - GET  (root)           → Action Hub listing
+    - POST (root)           → Action Hub listing (algunos clientes)
+    - POST .../form         → Formulario dinámico
+    - POST .../execute      → Ejecución de la acción
     """
     path = request.path.rstrip("/")
     method = request.method
 
-    # --- Action Hub listing (descubrimiento) ---
-    if method == "GET" and path in ("", "/"):
-        # Construir la base URL correcta (https + ruta completa de la función)
-        base_url = request.url.rstrip("/")
-        if base_url.startswith("http://"):
-            base_url = "https://" + base_url[7:]
+    # Log para debug
+    print(f"[ACTION HUB] {method} {path}", file=sys.stderr)
 
-        return json.dumps({
+    # Determinar qué endpoint se está llamando basado en el final del path
+    is_form = path.endswith("/form")
+    is_execute = path.endswith("/execute")
+    is_root = not is_form and not is_execute
+
+    # --- Action Hub listing (descubrimiento) ---
+    if is_root:
+        base_url = _get_base_url(request)
+        return _json_response({
             "label": "LookML Dashboard Updater",
             "integrations": [
                 {
@@ -93,11 +123,11 @@ def looker_action(request):
                     "params": [],
                 }
             ],
-        }), 200, {"Content-Type": "application/json"}
+        })
 
     # --- Formulario dinámico ---
-    if method == "POST" and path == "/form":
-        return json.dumps([
+    if is_form and method == "POST":
+        return _json_response([
             {
                 "name": "dashboard_id",
                 "label": "Dashboard ID",
@@ -117,10 +147,10 @@ def looker_action(request):
                 ],
                 "default": "yes",
             },
-        ]), 200, {"Content-Type": "application/json"}
+        ])
 
     # --- Ejecución de la acción ---
-    if method == "POST" and path == "/execute":
+    if is_execute and method == "POST":
         try:
             body = request.get_json(silent=True) or {}
             form_params = body.get("form_params", {})
@@ -128,32 +158,33 @@ def looker_action(request):
             confirm = form_params.get("confirm", "no")
 
             if confirm != "yes":
-                return json.dumps({
+                return _json_response({
                     "looker": {"success": True, "message": "Acción cancelada por el usuario."}
-                }), 200, {"Content-Type": "application/json"}
+                })
 
             if not dashboard_id:
-                return json.dumps({
+                return _json_response({
                     "looker": {"success": False, "message": "Falta el Dashboard ID."}
-                }), 400, {"Content-Type": "application/json"}
+                }, 400)
 
             # Validar secret si está configurado
             if ACTION_SECRET:
                 auth_header = request.headers.get("Authorization", "")
-                if f"Token token=\"{ACTION_SECRET}\"" not in auth_header:
-                    return json.dumps({
+                if f'Token token="{ACTION_SECRET}"' not in auth_header:
+                    return _json_response({
                         "looker": {"success": False, "message": "Unauthorized"}
-                    }), 401, {"Content-Type": "application/json"}
+                    }, 401)
 
             result = trigger_github_workflow(dashboard_id)
 
-            return json.dumps({
+            return _json_response({
                 "looker": {"success": result["ok"], "message": result["message"]}
-            }), 200, {"Content-Type": "application/json"}
+            })
 
         except Exception as e:
-            return json.dumps({
+            print(f"[ACTION HUB] Error en execute: {e}", file=sys.stderr)
+            return _json_response({
                 "looker": {"success": False, "message": f"Error: {str(e)}"}
-            }), 500, {"Content-Type": "application/json"}
+            }, 500)
 
-    return "Not Found", 404
+    return _json_response({"error": "Not Found"}, 404)
