@@ -73,6 +73,11 @@ def looker_action(request):
 
     # --- Action Hub listing (descubrimiento) ---
     if method == "GET" and path in ("", "/"):
+        # Construir la base URL correcta (https + ruta completa de la función)
+        base_url = request.url.rstrip("/")
+        if base_url.startswith("http://"):
+            base_url = "https://" + base_url[7:]
+
         return json.dumps({
             "label": "LookML Dashboard Updater",
             "integrations": [
@@ -82,8 +87,8 @@ def looker_action(request):
                     "description": "Importa el LookML de este dashboard, limpia id/slug y reemplaza el modelo por @{model_name}",
                     "supported_action_types": ["dashboard"],
                     "icon_data_uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM1OGE2ZmYiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTIxIDE1djRhMiAyIDAgMCAxLTIgMkg1YTIgMiAwIDAgMS0yLTJ2LTQiLz48cG9seWxpbmUgcG9pbnRzPSIxNyA4IDEyIDMgNyA4Ii8+PGxpbmUgeDE9IjEyIiB5MT0iMyIgeDI9IjEyIiB5Mj0iMTUiLz48L3N2Zz4=",
-                    "form_url": f"{request.url_root}form",
-                    "url": f"{request.url_root}execute",
+                    "form_url": f"{base_url}/form",
+                    "url": f"{base_url}/execute",
                     "supported_formats": ["txt"],
                     "params": [],
                 }
