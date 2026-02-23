@@ -57,11 +57,6 @@ def trigger_github_workflow(dashboard_id: str) -> dict:
         }
 
 
-def _get_base_url():
-    """Devuelve la URL base pública de esta Cloud Function."""
-    return FUNCTION_URL
-
-
 def _json_response(data, status=200):
     """Helper para devolver JSON con headers correctos."""
     return (
@@ -71,112 +66,115 @@ def _json_response(data, status=200):
     )
 
 
+def _action_list():
+    """Devuelve el listado de acciones disponibles (descubrimiento)."""
+    return _json_response({
+        "label": "LookML Dashboard Updater",
+        "integrations": [
+            {
+                "name": "update_lookml_dashboard",
+                "label": "🔄 Actualizar Dashboard en base_project",
+                "description": "Importa el LookML de este dashboard, limpia id/slug y reemplaza el modelo por @{model_name}",
+                "supported_action_types": ["dashboard"],
+                "icon_data_uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM1OGE2ZmYiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTIxIDE1djRhMiAyIDAgMCAxLTIgMkg1YTIgMiAwIDAgMS0yLTJ2LTQiLz48cG9seWxpbmUgcG9pbnRzPSIxNyA4IDEyIDMgNyA4Ii8+PGxpbmUgeDE9IjEyIiB5MT0iMyIgeDI9IjEyIiB5Mj0iMTUiLz48L3N2Zz4=",
+                "form_url": f"{FUNCTION_URL}/form",
+                "url": f"{FUNCTION_URL}/execute",
+                "supported_formats": ["txt"],
+                "params": [],
+            }
+        ],
+    })
+
+
+def _action_form():
+    """Devuelve el formulario dinámico de la acción."""
+    return _json_response([
+        {
+            "name": "dashboard_id",
+            "label": "Dashboard ID",
+            "description": "ID del dashboard en Looker a actualizar en base_project",
+            "type": "text",
+            "required": True,
+        },
+        {
+            "name": "confirm",
+            "label": "Confirmar actualización",
+            "description": "¿Seguro que quieres actualizar este dashboard?",
+            "type": "select",
+            "required": True,
+            "options": [
+                {"name": "yes", "label": "✅ Sí, actualizar"},
+                {"name": "no", "label": "❌ No, cancelar"},
+            ],
+            "default": "yes",
+        },
+    ])
+
+
+def _action_execute(body):
+    """Ejecuta la acción: dispara el workflow de GitHub Actions."""
+    form_params = body.get("form_params", {})
+    dashboard_id = form_params.get("dashboard_id", "")
+    confirm = form_params.get("confirm", "no")
+
+    if confirm != "yes":
+        return _json_response({
+            "looker": {"success": True, "message": "Acción cancelada por el usuario."}
+        })
+
+    if not dashboard_id:
+        return _json_response({
+            "looker": {"success": False, "message": "Falta el Dashboard ID."}
+        }, 400)
+
+    result = trigger_github_workflow(dashboard_id)
+
+    return _json_response({
+        "looker": {"success": result["ok"], "message": result["message"]}
+    })
+
+
 # ──────────────────────────────────────────────
-# Endpoint principal: Looker Action Hub
+# Endpoint principal
 # ──────────────────────────────────────────────
 
 @functions_framework.http
 def looker_action(request):
     """
-    Maneja los requests del Looker Action Hub.
-
-    Looker puede enviar:
-    - GET  (root)           → Action Hub listing
-    - POST (root)           → Action Hub listing (algunos clientes)
-    - POST .../form         → Formulario dinámico
-    - POST .../execute      → Ejecución de la acción
+    Endpoint único que maneja todos los requests del Looker Action Hub.
+    
+    Cloud Functions no soporta sub-paths, así que detectamos el tipo
+    de request por el MÉTODO + CONTENIDO DEL BODY:
+    
+    - GET  → Descubrimiento (action list)
+    - POST sin body / sin form_params → Formulario (form)
+    - POST con form_params → Ejecución (execute)
     """
-    path = request.path.rstrip("/")
     method = request.method
+    body = request.get_json(silent=True) or {}
 
-    # Log para debug
-    print(f"[ACTION HUB] {method} {path}", file=sys.stderr)
+    print(f"[ACTION HUB] {method} | body keys: {list(body.keys())}", file=sys.stderr)
 
-    # Determinar qué endpoint se está llamando basado en el final del path
-    is_form = path.endswith("/form")
-    is_execute = path.endswith("/execute")
-    is_root = not is_form and not is_execute
+    try:
+        # GET → Descubrimiento
+        if method == "GET":
+            return _action_list()
 
-    # --- Action Hub listing (descubrimiento) ---
-    if is_root:
-        base_url = _get_base_url()
+        # POST → Distinguir entre form y execute por el contenido
+        if method == "POST":
+            # Si tiene form_params → es una ejecución
+            if "form_params" in body:
+                print(f"[ACTION HUB] EXECUTE: form_params={body['form_params']}", file=sys.stderr)
+                return _action_execute(body)
+
+            # Si no tiene form_params → es un request de formulario
+            print("[ACTION HUB] FORM request", file=sys.stderr)
+            return _action_form()
+
+        return _json_response({"error": "Method not allowed"}, 405)
+
+    except Exception as e:
+        print(f"[ACTION HUB] ERROR: {e}", file=sys.stderr)
         return _json_response({
-            "label": "LookML Dashboard Updater",
-            "integrations": [
-                {
-                    "name": "update_lookml_dashboard",
-                    "label": "🔄 Actualizar Dashboard en base_project",
-                    "description": "Importa el LookML de este dashboard, limpia id/slug y reemplaza el modelo por @{model_name}",
-                    "supported_action_types": ["dashboard"],
-                    "icon_data_uri": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM1OGE2ZmYiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTIxIDE1djRhMiAyIDAgMCAxLTIgMkg1YTIgMiAwIDAgMS0yLTJ2LTQiLz48cG9seWxpbmUgcG9pbnRzPSIxNyA4IDEyIDMgNyA4Ii8+PGxpbmUgeDE9IjEyIiB5MT0iMyIgeDI9IjEyIiB5Mj0iMTUiLz48L3N2Zz4=",
-                    "form_url": f"{base_url}/form",
-                    "url": f"{base_url}/execute",
-                    "supported_formats": ["txt"],
-                    "params": [],
-                }
-            ],
-        })
-
-    # --- Formulario dinámico ---
-    if is_form and method == "POST":
-        return _json_response([
-            {
-                "name": "dashboard_id",
-                "label": "Dashboard ID",
-                "description": "ID del dashboard en Looker a actualizar en base_project",
-                "type": "text",
-                "required": True,
-            },
-            {
-                "name": "confirm",
-                "label": "Confirmar actualización",
-                "description": "¿Seguro que quieres actualizar este dashboard?",
-                "type": "select",
-                "required": True,
-                "options": [
-                    {"name": "yes", "label": "✅ Sí, actualizar"},
-                    {"name": "no", "label": "❌ No, cancelar"},
-                ],
-                "default": "yes",
-            },
-        ])
-
-    # --- Ejecución de la acción ---
-    if is_execute and method == "POST":
-        try:
-            body = request.get_json(silent=True) or {}
-            form_params = body.get("form_params", {})
-            dashboard_id = form_params.get("dashboard_id", "")
-            confirm = form_params.get("confirm", "no")
-
-            if confirm != "yes":
-                return _json_response({
-                    "looker": {"success": True, "message": "Acción cancelada por el usuario."}
-                })
-
-            if not dashboard_id:
-                return _json_response({
-                    "looker": {"success": False, "message": "Falta el Dashboard ID."}
-                }, 400)
-
-            # Validar secret si está configurado
-            if ACTION_SECRET:
-                auth_header = request.headers.get("Authorization", "")
-                if f'Token token="{ACTION_SECRET}"' not in auth_header:
-                    return _json_response({
-                        "looker": {"success": False, "message": "Unauthorized"}
-                    }, 401)
-
-            result = trigger_github_workflow(dashboard_id)
-
-            return _json_response({
-                "looker": {"success": result["ok"], "message": result["message"]}
-            })
-
-        except Exception as e:
-            print(f"[ACTION HUB] Error en execute: {e}", file=sys.stderr)
-            return _json_response({
-                "looker": {"success": False, "message": f"Error: {str(e)}"}
-            }, 500)
-
-    return _json_response({"error": "Not Found"}, 404)
+            "looker": {"success": False, "message": f"Error: {str(e)}"}
+        }, 500)
