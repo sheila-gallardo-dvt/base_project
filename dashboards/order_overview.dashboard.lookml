@@ -3,7 +3,6 @@
   title: Order Overview
   preferred_viewer: dashboards-next
   description: Dashboard resumen de pedidos
-  preferred_slug: T6VTlyf6WSchna88vosYfs
   layout: newspaper
   tabs:
   - name: ''
