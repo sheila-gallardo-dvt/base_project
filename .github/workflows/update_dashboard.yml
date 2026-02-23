@@ -1,0 +1,56 @@
+name: "🔄 Actualizar Dashboard LookML"
+
+on:
+  workflow_dispatch:
+    inputs:
+      dashboard_id:
+        description: "ID del dashboard en Looker (número o slug)"
+        required: true
+        type: string
+
+env:
+  LOOKERSDK_BASE_URL: ${{ secrets.LOOKERSDK_BASE_URL }}
+  LOOKERSDK_CLIENT_ID: ${{ secrets.LOOKERSDK_CLIENT_ID }}
+  LOOKERSDK_CLIENT_SECRET: ${{ secrets.LOOKERSDK_CLIENT_SECRET }}
+
+jobs:
+  update-dashboard:
+    name: "Importar y limpiar dashboard"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Instalar dependencias
+        run: pip install -r scripts/requirements.txt
+
+      - name: 🔄 Obtener y transformar dashboard
+        id: update
+        run: |
+          python scripts/update_dashboard.py \
+            --dashboard_id "${{ github.event.inputs.dashboard_id }}"
+
+      - name: 📝 Commit y push de cambios
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add dashboards/
+          
+          if git diff --staged --quiet; then
+            echo "ℹ️ No hay cambios que commitear."
+          else
+            DASHBOARD_NAME="${{ steps.update.outputs.dashboard_name }}"
+            ACTION="${{ steps.update.outputs.action }}"
+            git commit -m "🔄 Dashboard ${ACTION}: ${DASHBOARD_NAME}" \
+              -m "Dashboard ID: ${{ github.event.inputs.dashboard_id }}" \
+              -m "Ejecutado por: ${{ github.actor }}"
+            git push
+            echo "✅ Cambios pusheados correctamente."
+          fi
