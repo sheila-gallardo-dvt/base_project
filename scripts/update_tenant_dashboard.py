@@ -133,11 +133,47 @@ class LookMLDumper(yaml.SafeDumper):
     """Dumper YAML personalizado para LookML."""
     pass
 
-def flow_style_list(dumper, data):
+class FlowList(list):
+    """Lista que se pintará en estilo flow [a, b]."""
+    pass
+
+class FlowDict(dict):
+    """Diccionario que se pintará en estilo flow {a: b}."""
+    pass
+
+def represent_flow_list(dumper, data):
     return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
 
-# Registrar tipos para que se pinten en estilo flow [a, b]
-LookMLDumper.add_representer(list, flow_style_list)
+def represent_flow_dict(dumper, data):
+    return dumper.represent_mapping('tag:yaml.org,2002:map', data, flow_style=True)
+
+# Registrar tipos para que se pinten en estilo flow
+LookMLDumper.add_representer(FlowList, represent_flow_list)
+LookMLDumper.add_representer(FlowDict, represent_flow_dict)
+
+def wrap_flow_structures(data):
+    """
+    Recorre los datos y envuelve listas/dicts específicos en FlowList/FlowDict
+    para que el dumper los pinte en una sola línea.
+    """
+    if isinstance(data, dict):
+        new_dict = {}
+        for k, v in data.items():
+            # Estos campos suelen ir en una sola línea en LookML
+            if k in ["extends", "fields", "sorts", "listens_to_filters", "listen"]:
+                if isinstance(v, list):
+                    new_dict[k] = FlowList(v)
+                elif isinstance(v, dict):
+                    # Solo convertir a FlowDict si no es muy grande (opcional)
+                    new_dict[k] = FlowDict(v)
+                else:
+                    new_dict[k] = v
+            else:
+                new_dict[k] = wrap_flow_structures(v)
+        return new_dict
+    elif isinstance(data, list):
+        return [wrap_flow_structures(item) for item in data]
+    return data
 
 def normalize_element(element: dict, remove_model: bool = False) -> dict:
     """Normaliza un elemento para comparación (quita campos volátiles y ruidosos)."""
@@ -289,17 +325,21 @@ def generate_extends_dashboard(
     if diff_filters:
         dashboard["filters"] = diff_filters
 
-    # Generar YAML usando el dumper personalizado para listas [a, b]
+    # Envolver estructuras que queremos en estilo flow [a, b] o {a: b}
+    dashboard_wrapped = wrap_flow_structures(dashboard)
+
+    # Generar YAML
     output = yaml.dump(
-        [dashboard],
+        [dashboard_wrapped],
         Dumper=LookMLDumper,
         allow_unicode=True,
         sort_keys=False,
         width=200,
     )
 
-    # Añadir separador YAML al inicio
-    output = "---\n" + output
+    # Asegurar el separador YAML al inicio
+    if not output.startswith("---\n"):
+        output = "---\n" + output
 
     # Reemplazar modelo por el nombre real del tenant si se proporciona
     if tenant_model:
@@ -312,12 +352,31 @@ def generate_extends_dashboard(
 
 def generate_standalone_dashboard(lookml: str, tenant_model: str = "") -> str:
     """Genera un dashboard standalone (sin extend): limpia y reemplaza modelo."""
-    cleaned = clean_lookml(lookml)
+    # Para standalone, el LookML ya viene generado (formato Looker API).
+    # Pero si lo queremos exacto al formato del base project (flow style), 
+    # tendríamos que parsearlo y re-generarlo.
+    parsed = parse_dashboard_yaml(lookml)
+    if not parsed:
+        return lookml
+        
+    dashboard_wrapped = wrap_flow_structures(parsed)
+    output = yaml.dump(
+        [dashboard_wrapped],
+        Dumper=LookMLDumper,
+        allow_unicode=True,
+        sort_keys=False,
+        width=200,
+    )
+    
+    if not output.startswith("---\n"):
+        output = "---\n" + output
+        
     if tenant_model:
-        cleaned = replace_model_name(cleaned, tenant_model)
+        output = replace_model_name(output, tenant_model)
     else:
-        cleaned = replace_model_name(cleaned)
-    return cleaned
+        output = replace_model_name(output)
+        
+    return output
 
 
 # ──────────────────────────────────────────────
