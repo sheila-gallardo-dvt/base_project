@@ -1,6 +1,6 @@
 ---
-- dashboard: order_overview
-  title: Order Overview
+- dashboard: order_overview_nuevo
+  title: Order Overview nuevo
   preferred_viewer: dashboards-next
   description: Dashboard resumen de pedidos
   theme_name: ''
