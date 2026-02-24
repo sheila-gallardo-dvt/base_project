@@ -129,14 +129,58 @@ def parse_dashboard_yaml(lookml: str) -> dict:
     return docs or {}
 
 
+class LookMLDumper(yaml.SafeDumper):
+    """Dumper YAML personalizado para LookML."""
+    pass
+
+def flow_style_list(dumper, data):
+    return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
+
+# Registrar tipos para que se pinten en estilo flow [a, b]
+LookMLDumper.add_representer(list, flow_style_list)
+
 def normalize_element(element: dict, remove_model: bool = False) -> dict:
-    """Normaliza un elemento para comparación (quita campos volátiles)."""
+    """Normaliza un elemento para comparación (quita campos volátiles y ruidosos)."""
     normalized = dict(element)
-    # Quitar campos que cambian entre versiones
+    
+    # 1. Quitar identificadores volátiles de la API
     for key in ("id", "slug", "preferred_slug"):
         normalized.pop(key, None)
+    
+    # 2. Quitar el modelo si se solicita (para comparar lógica pura)
     if remove_model:
         normalized.pop("model", None)
+    
+    # 3. Quitar campos por defecto ruidosos que Looker API añade pero no suelen estar en el .lookml base
+    noisy_defaults = {
+        "show_view_names": False,
+        "show_comparison": False,
+        "comparison_type": "value",
+        "comparison_reverse_colors": False,
+        "show_comparison_label": True,
+        "enable_conditional_formatting": False,
+        "conditional_formatting_include_totals": False,
+        "conditional_formatting_include_nulls": False,
+        "defaults_version": 1,
+        "tab_name": "",
+        "hidden": False,
+        "transpose": False,
+        "truncate_text": True,
+        "hide_totals": False,
+        "hide_row_totals": False,
+        "size_to_fit": True,
+        "row": None, # Las filas/cols a veces cambian si no están fijas
+        "col": None,
+        "width": None,
+        "height": None,
+    }
+    
+    # Solo quitar si el valor coincide con el default ruidoso
+    # Esto evita "falsos positivos" de cambio
+    for key, default_val in noisy_defaults.items():
+        if key in normalized and normalized[key] == default_val:
+            normalized.pop(key)
+            
     return normalized
 
 
@@ -207,10 +251,16 @@ def clean_lookml(lookml: str) -> str:
     return "\n".join(filtered)
 
 
-def replace_model_name(lookml: str) -> str:
-    """Reemplaza el nombre del modelo por @{model_name}."""
-    lookml = re.sub(r'(model:\s*)"[^"]*"', r'\1"@{model_name}"', lookml)
-    lookml = re.sub(r'(model:\s*)(?!["@])(\S+)', r'\1"@{model_name}"', lookml)
+def replace_model_name(lookml: str, target_model: str = "@{model_name}") -> str:
+    """Reemplaza el nombre del modelo por el target_model."""
+    # Asegurar que el target_model tiene comillas si no es la variable @{}
+    if not target_model.startswith("@{"):
+        replacement = f'"{target_model}"'
+    else:
+        replacement = target_model
+
+    lookml = re.sub(r'(model:\s*)"[^"]*"', rf'\1{replacement}', lookml)
+    lookml = re.sub(r'(model:\s*)(?!["@])(\S+)', rf'\1{replacement}', lookml)
     return lookml
 
 
@@ -221,6 +271,7 @@ def generate_extends_dashboard(
     diff_elements: list,
     diff_filters: list,
     tenant_title: str = "",
+    tenant_model: str = "",
 ) -> str:
     """
     Genera el LookML de un dashboard que extiende el base,
@@ -238,10 +289,10 @@ def generate_extends_dashboard(
     if diff_filters:
         dashboard["filters"] = diff_filters
 
-    # Generar YAML
+    # Generar YAML usando el dumper personalizado para listas [a, b]
     output = yaml.dump(
         [dashboard],
-        default_flow_style=False,
+        Dumper=LookMLDumper,
         allow_unicode=True,
         sort_keys=False,
         width=200,
@@ -250,16 +301,22 @@ def generate_extends_dashboard(
     # Añadir separador YAML al inicio
     output = "---\n" + output
 
-    # Reemplazar modelo por variable
-    output = replace_model_name(output)
-
+    # Reemplazar modelo por el nombre real del tenant si se proporciona
+    if tenant_model:
+        output = replace_model_name(output, tenant_model)
+    else:
+        output = replace_model_name(output)
+    
     return output
 
 
-def generate_standalone_dashboard(lookml: str) -> str:
+def generate_standalone_dashboard(lookml: str, tenant_model: str = "") -> str:
     """Genera un dashboard standalone (sin extend): limpia y reemplaza modelo."""
     cleaned = clean_lookml(lookml)
-    cleaned = replace_model_name(cleaned)
+    if tenant_model:
+        cleaned = replace_model_name(cleaned, tenant_model)
+    else:
+        cleaned = replace_model_name(cleaned)
     return cleaned
 
 
@@ -304,9 +361,18 @@ def detect_base_dashboard_name(tenant_dashboards_dir: str, dashboard_name: str) 
     with open(existing, "r", encoding="utf-8") as f:
         content = f.read()
 
+    # Intentar detectar estilo flow: extends: [name]
     match = re.search(r"extends:\s*\[(\w+)\]", content)
     if match:
         return match.group(1)
+    
+    # Intentar detectar estilo block:
+    # extends:
+    # - name
+    match = re.search(r"extends:\s*\n\s+-\s+(\w+)", content)
+    if match:
+        return match.group(1)
+    
     return None
 
 
@@ -368,22 +434,30 @@ def main():
     if not base_dashboard_name:
         base_dashboard_name = detect_base_dashboard_name(dashboards_dir, dashboard_name)
 
+    # Obtener info básica del tenant (model name) siempre
+    tenant_model = args.tenant_name
+    base_ref = "main"
+    base_owner = args.base_repo_owner or ""
+    base_repo = args.base_repo_name or ""
+
+    if os.path.exists(manifest_path):
+        print(f"📄 Leyendo manifest: {manifest_path}")
+        manifest_info = parse_tenant_manifest(manifest_path)
+        tenant_model = manifest_info.get("model_name", tenant_model)
+        base_ref = manifest_info.get("base_ref", base_ref)
+        if not base_owner:
+            base_owner = manifest_info.get("base_owner", "")
+        if not base_repo:
+            base_repo = manifest_info.get("base_repo", "")
+
     gh_token = os.environ.get("GH_TOKEN", "")
 
     if base_dashboard_name:
         # ─── CASO EXTEND ───
         print(f"🔗 Dashboard extiende: '{base_dashboard_name}'")
-
-        # Leer manifest del tenant
-        print(f"📄 Leyendo manifest: {manifest_path}")
-        manifest_info = parse_tenant_manifest(manifest_path)
-        base_ref = manifest_info.get("base_ref", "main")
-        base_owner = args.base_repo_owner or manifest_info.get("base_owner", "")
-        base_repo = args.base_repo_name or manifest_info.get("base_repo", "")
-        tenant_model = manifest_info.get("model_name", args.tenant_name)
-
         print(f"  📌 Base ref: {base_ref}")
         print(f"  📦 Base repo: {base_owner}/{base_repo}")
+        print(f"  🏗️  Tenant model: {tenant_model}")
 
         # Obtener base dashboard desde GitHub
         print(f"📥 Obteniendo base dashboard '{base_dashboard_name}' @ {base_ref}...")
@@ -424,11 +498,12 @@ def main():
                 diff_elements=diff_elements,
                 diff_filters=diff_filters,
                 tenant_title=tenant_title,
+                tenant_model=tenant_model,
             )
     else:
         # ─── CASO NUEVO (sin extend) ───
-        print("🆕 Dashboard nuevo (sin extend del base)")
-        output = generate_standalone_dashboard(raw_lookml)
+        print(f"🆕 Dashboard nuevo (sin extend del base). Model: {tenant_model}")
+        output = generate_standalone_dashboard(raw_lookml, tenant_model=tenant_model)
 
     # --- Paso 3: Guardar ---
     existing = find_existing_file(dashboards_dir, dashboard_name)
