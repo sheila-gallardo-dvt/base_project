@@ -295,8 +295,10 @@ def replace_model_name(lookml: str, target_model: str = "@{model_name}") -> str:
     else:
         replacement = target_model
 
-    lookml = re.sub(r'(model:\s*)"[^"]*"', rf'\1{replacement}', lookml)
-    lookml = re.sub(r'(model:\s*)(?!["@])(\S+)', rf'\1{replacement}', lookml)
+    # Esta regex es más robusta:
+    # Captura 'model: "...", 'model: ...', o 'model: @{...}'
+    # El valor a reemplazar puede estar entre comillas, ser un simple string o una constante @{}
+    lookml = re.sub(r'(model:\s*)(?:\"[^\"]*\"|[@\w{}]+)', rf'\1{replacement}', lookml)
     return lookml
 
 
@@ -332,6 +334,7 @@ def generate_extends_dashboard(
     output = yaml.dump(
         [dashboard_wrapped],
         Dumper=LookMLDumper,
+        default_flow_style=False,  # Asegura estilo bloque por defecto
         allow_unicode=True,
         sort_keys=False,
         width=200,
@@ -363,6 +366,7 @@ def generate_standalone_dashboard(lookml: str, tenant_model: str = "") -> str:
     output = yaml.dump(
         [dashboard_wrapped],
         Dumper=LookMLDumper,
+        default_flow_style=False,  # Asegura estilo bloque por defecto
         allow_unicode=True,
         sort_keys=False,
         width=200,
