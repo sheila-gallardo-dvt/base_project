@@ -30,7 +30,7 @@
     row: 0
     col: 0
     width: 6
-    height: 4
+    height: 12
     tab_name: ''
   - title: Total Orders
     name: Total Orders
