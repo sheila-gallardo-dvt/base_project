@@ -53,7 +53,7 @@
     row: 0
     col: 6
     width: 6
-    height: 4
+    height: 12
     tab_name: ''
   - title: Average Sale Price
     name: Average Sale Price
