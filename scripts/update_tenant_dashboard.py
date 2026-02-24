@@ -20,7 +20,6 @@ import argparse
 import os
 import re
 import sys
-import textwrap
 
 import looker_sdk
 import requests
