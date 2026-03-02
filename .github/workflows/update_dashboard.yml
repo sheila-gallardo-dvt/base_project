@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       dashboard_id:
-        description: "ID(s) del dashboard en Looker, separados por espacio (ej: 42 55 99)"
+        description: "ID(s) del dashboard en Looker, separados por espacio (ej: 42 55 8LWxYgffFEbPplvemGZcpD)"
         required: true
         type: string
 

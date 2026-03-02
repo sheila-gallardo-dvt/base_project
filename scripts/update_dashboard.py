@@ -177,6 +177,7 @@ def main():
             Ejemplo de uso:
               python update_dashboard.py --dashboard_id 42
               python update_dashboard.py --dashboard_id 42 55 99
+              python update_dashboard.py --dashboard_id 8LWxYgffFEbPplvemGZcpD
 
             Variables de entorno necesarias:
               LOOKERSDK_BASE_URL       URL de la instancia de Looker
@@ -188,7 +189,7 @@ def main():
         "--dashboard_id",
         nargs="+",
         required=True,
-        help="ID(s) numérico(s) del dashboard en Looker (se pueden pasar varios separados por espacio)",
+        help="ID(s) del dashboard en Looker: numérico (42) o slug (8LWxYgffFEbPplvemGZcpD). Se pueden pasar varios separados por espacio.",
     )
     parser.add_argument(
         "--output_dir",
