@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       dashboard_id:
-        description: "ID del dashboard en Looker (número o slug)"
+        description: "ID(s) del dashboard en Looker, separados por espacio (ej: 42 55 99)"
         required: true
         type: string
 
@@ -37,7 +37,7 @@ jobs:
         id: update
         run: |
           python scripts/update_dashboard.py \
-            --dashboard_id "${{ github.event.inputs.dashboard_id }}"
+            --dashboard_id ${{ github.event.inputs.dashboard_id }}
 
       - name: 📝 Commit y push de cambios
         run: |
@@ -49,10 +49,10 @@ jobs:
           if git diff --staged --quiet; then
             echo "ℹ️ No hay cambios que commitear."
           else
-            DASHBOARD_NAME="${{ steps.update.outputs.dashboard_name }}"
-            ACTION="${{ steps.update.outputs.action }}"
-            git commit -m "🔄 Dashboard ${ACTION}: ${DASHBOARD_NAME}" \
-              -m "Dashboard ID: ${{ github.event.inputs.dashboard_id }}" \
+            DASHBOARD_COUNT="${{ steps.update.outputs.dashboard_count }}"
+            DASHBOARD_NAMES='${{ steps.update.outputs.dashboard_names }}'
+            git commit -m "🔄 Actualizados ${DASHBOARD_COUNT} dashboard(s): ${DASHBOARD_NAMES}" \
+              -m "Dashboard IDs: ${{ github.event.inputs.dashboard_id }}" \
               -m "Ejecutado por: ${{ github.actor }}"
             git push
             echo "✅ Cambios pusheados correctamente."

@@ -8,6 +8,7 @@ en base_project/dashboards/.
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -126,13 +127,56 @@ def save_dashboard(filepath: str, lookml: str) -> None:
         f.write(lookml)
 
 
+def process_dashboard(sdk, dashboard_id: str, dashboards_dir: str, dry_run: bool) -> dict:
+    """Procesa un único dashboard y devuelve un dict con el resultado."""
+    print(f"\n{'='*60}")
+    print(f"📥 Obteniendo LookML del dashboard ID: {dashboard_id}")
+    raw_lookml = get_dashboard_lookml(sdk, dashboard_id)
+
+    # Detectar nombre del dashboard
+    dashboard_name = extract_dashboard_name(raw_lookml)
+    print(f"📋 Dashboard detectado: '{dashboard_name}'")
+
+    # Transformar el LookML
+    print("🔧 Limpiando id y slug...")
+    cleaned = remove_id_and_slug(raw_lookml)
+
+    print("🔧 Reemplazando modelo por @{{model_name}}...")
+    cleaned = replace_model_name(cleaned)
+
+    # Determinar fichero de destino
+    existing = find_existing_file(dashboards_dir, dashboard_name)
+    if existing:
+        filepath = existing
+        action = "ACTUALIZADO"
+    else:
+        filepath = os.path.join(dashboards_dir, f"{dashboard_name}.dashboard.lookml")
+        action = "CREADO"
+
+    # Guardar o mostrar
+    if dry_run:
+        print(f"\n--- DRY RUN: {action} → {filepath} ---")
+        print(cleaned)
+    else:
+        save_dashboard(filepath, cleaned)
+        print(f"\n✅ Dashboard {action}: {filepath}")
+
+    return {
+        "dashboard_id": dashboard_id,
+        "dashboard_name": dashboard_name,
+        "file_path": filepath,
+        "action": action,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Importa un dashboard de Looker como LookML limpio para el base_project.",
+        description="Importa dashboards de Looker como LookML limpio para el base_project.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""
             Ejemplo de uso:
               python update_dashboard.py --dashboard_id 42
+              python update_dashboard.py --dashboard_id 42 55 99
 
             Variables de entorno necesarias:
               LOOKERSDK_BASE_URL       URL de la instancia de Looker
@@ -142,8 +186,9 @@ def main():
     )
     parser.add_argument(
         "--dashboard_id",
+        nargs="+",
         required=True,
-        help="ID numérico del dashboard en Looker",
+        help="ID(s) numérico(s) del dashboard en Looker (se pueden pasar varios separados por espacio)",
     )
     parser.add_argument(
         "--output_dir",
@@ -166,49 +211,30 @@ def main():
         dashboards_dir = os.path.join(script_dir, "..", "dashboards")
     dashboards_dir = os.path.abspath(dashboards_dir)
 
-    # --- Paso 1: Obtener el LookML del dashboard ---
+    # Conectar con Looker API
     print(f"📡 Conectando con Looker API...")
     sdk = looker_sdk.init40()
 
-    print(f"📥 Obteniendo LookML del dashboard ID: {args.dashboard_id}")
-    raw_lookml = get_dashboard_lookml(sdk, args.dashboard_id)
+    # Procesar cada dashboard
+    results = []
+    for dashboard_id in args.dashboard_id:
+        result = process_dashboard(sdk, dashboard_id, dashboards_dir, args.dry_run)
+        results.append(result)
 
-    # --- Paso 2: Detectar nombre del dashboard ---
-    dashboard_name = extract_dashboard_name(raw_lookml)
-    print(f"📋 Dashboard detectado: '{dashboard_name}'")
+    # Resumen final
+    print(f"\n{'='*60}")
+    print(f"🏁 Procesados {len(results)} dashboard(s):")
+    for r in results:
+        print(f"   - [{r['action']}] {r['dashboard_name']} (ID: {r['dashboard_id']}) → {r['file_path']}")
 
-    # --- Paso 3: Transformar el LookML ---
-    print("🔧 Limpiando id y slug...")
-    cleaned = remove_id_and_slug(raw_lookml)
-
-    print("🔧 Reemplazando modelo por @{{model_name}}...")
-    cleaned = replace_model_name(cleaned)
-
-    # --- Paso 4: Determinar fichero de destino ---
-    existing = find_existing_file(dashboards_dir, dashboard_name)
-    if existing:
-        filepath = existing
-        action = "ACTUALIZADO"
-    else:
-        filepath = os.path.join(dashboards_dir, f"{dashboard_name}.dashboard.lookml")
-        action = "CREADO"
-
-    # --- Paso 5: Guardar o mostrar ---
-    if args.dry_run:
-        print(f"\n--- DRY RUN: {action} → {filepath} ---")
-        print(cleaned)
-    else:
-        save_dashboard(filepath, cleaned)
-        print(f"\n✅ Dashboard {action}: {filepath}")
-
-    # Resumen para GitHub Actions
-    # Exponer outputs como variables de entorno de GitHub
+    # Exponer outputs como variables de entorno de GitHub Actions
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:
         with open(github_output, "a") as f:
-            f.write(f"dashboard_name={dashboard_name}\n")
-            f.write(f"file_path={filepath}\n")
-            f.write(f"action={action}\n")
+            f.write(f"dashboard_names={json.dumps([r['dashboard_name'] for r in results])}\n")
+            f.write(f"file_paths={json.dumps([r['file_path'] for r in results])}\n")
+            f.write(f"actions={json.dumps([r['action'] for r in results])}\n")
+            f.write(f"dashboard_count={len(results)}\n")
 
 
 if __name__ == "__main__":
