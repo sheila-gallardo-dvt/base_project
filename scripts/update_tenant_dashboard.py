@@ -17,6 +17,7 @@ Uso:
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -439,46 +440,21 @@ def detect_base_dashboard_name(tenant_dashboards_dir: str, dashboard_name: str) 
 
 
 # ──────────────────────────────────────────────
-# Main
+# 7. Procesamiento de un dashboard individual
 # ──────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Actualiza dashboards LookML de un tenant con diff frente al base.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--dashboard_id", required=True, help="ID del dashboard en Looker")
-    parser.add_argument("--tenant_name", required=True, help="Nombre del tenant (ej: tenant_1)")
-    parser.add_argument("--tenant_dir", default=None, help="Ruta al proyecto del tenant")
-    parser.add_argument("--base_dashboard", default=None,
-                        help="Nombre del dashboard base que extiende (si aplica). Si no se indica, se intenta detectar automáticamente.")
-    parser.add_argument("--base_repo_owner", default=None,
-                        help="Owner del repo base en GitHub (override del manifest)")
-    parser.add_argument("--base_repo_name", default=None,
-                        help="Nombre del repo base en GitHub (override del manifest)")
-    parser.add_argument("--dry_run", action="store_true", help="Muestra resultado sin guardar")
-
-    args = parser.parse_args()
-
-    # Resolver directorio del tenant
-    if args.tenant_dir:
-        tenant_dir = os.path.abspath(args.tenant_dir)
-    else:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        tenant_dir = os.path.join(script_dir, "..", "..", args.tenant_name)
-    tenant_dir = os.path.abspath(tenant_dir)
-
-    dashboards_dir = os.path.join(tenant_dir, "dashboards")
-    manifest_path = os.path.join(tenant_dir, "manifest.lkml")
-
-    print(f"📁 Tenant dir: {tenant_dir}")
-
-    # --- Paso 1: Obtener LookML del dashboard ---
-    print("📡 Conectando con Looker API...")
-    sdk = looker_sdk.init40()
-
-    print(f"📥 Obteniendo LookML del dashboard ID: {args.dashboard_id}")
-    raw_lookml = get_dashboard_lookml(sdk, args.dashboard_id)
+def process_dashboard(
+    sdk,
+    dashboard_id: str,
+    args,
+    dashboards_dir: str,
+    manifest_path: str,
+    tenant_dir: str,
+) -> dict:
+    """Procesa un único dashboard y devuelve un dict con el resultado."""
+    print(f"\n{'='*60}")
+    print(f"📥 Obteniendo LookML del dashboard ID: {dashboard_id}")
+    raw_lookml = get_dashboard_lookml(sdk, dashboard_id)
 
     # Extraer nombre del dashboard
     name_match = re.search(r"^-\s+dashboard:\s+(\S+)", raw_lookml, re.MULTILINE)
@@ -488,11 +464,9 @@ def main():
     dashboard_name = name_match.group(1)
     print(f"📋 Dashboard detectado: '{dashboard_name}'")
 
-    # --- Paso 2: Determinar si es un extend ---
-    # Primero: ¿se indicó explícitamente un base_dashboard?
+    # Determinar si es un extend
     base_dashboard_name = args.base_dashboard
 
-    # Si no, intentar detectar del fichero existente
     if not base_dashboard_name:
         base_dashboard_name = detect_base_dashboard_name(dashboards_dir, dashboard_name)
 
@@ -521,7 +495,6 @@ def main():
         print(f"  📦 Base repo: {base_owner}/{base_repo}")
         print(f"  🏗️  Tenant model: {tenant_model}")
 
-        # Obtener base dashboard desde GitHub
         print(f"📥 Obteniendo base dashboard '{base_dashboard_name}' @ {base_ref}...")
         base_lookml = get_base_dashboard_from_github(
             base_owner, base_repo, base_ref, base_dashboard_name, gh_token
@@ -531,7 +504,6 @@ def main():
             print("⚠️  No se encontró el base dashboard. Generando como standalone.")
             output = generate_standalone_dashboard(raw_lookml)
         else:
-            # Parsear ambos dashboards
             tenant_parsed = parse_dashboard_yaml(raw_lookml)
             base_parsed = parse_dashboard_yaml(base_lookml)
 
@@ -540,7 +512,6 @@ def main():
             tenant_filters = tenant_parsed.get("filters", [])
             base_filters = base_parsed.get("filters", [])
 
-            # Comparar
             diff_elements = compare_elements(tenant_elements, base_elements)
             diff_filters = compare_filters(tenant_filters, base_filters)
 
@@ -550,7 +521,6 @@ def main():
             print(f"  📊 Elementos: {n_total} total, {n_base} base, {n_new} nuevos/modificados")
             print(f"  📊 Filtros diff: {len(diff_filters)}")
 
-            # Título del tenant
             tenant_title = tenant_parsed.get("title", "")
 
             output = generate_extends_dashboard(
@@ -567,7 +537,7 @@ def main():
         print(f"🆕 Dashboard nuevo (sin extend del base). Model: {tenant_model}")
         output = generate_standalone_dashboard(raw_lookml, tenant_model=tenant_model)
 
-    # --- Paso 3: Guardar ---
+    # Guardar
     existing = find_existing_file(dashboards_dir, dashboard_name)
     if existing:
         filepath = existing
@@ -585,14 +555,85 @@ def main():
             f.write(output)
         print(f"\n✅ Dashboard {action}: {filepath}")
 
+    return {
+        "dashboard_id": dashboard_id,
+        "dashboard_name": dashboard_name,
+        "file_path": filepath,
+        "action": action,
+        "is_extend": bool(base_dashboard_name),
+    }
+
+
+# ──────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Actualiza dashboards LookML de un tenant con diff frente al base.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+    Ejemplo de uso:
+      python update_tenant_dashboard.py --dashboard_id 270 --tenant_name tenant_1
+      python update_tenant_dashboard.py --dashboard_id 270 375 8LWxYgffFEbPplvemGZcpD --tenant_name tenant_1
+        """,
+    )
+    parser.add_argument(
+        "--dashboard_id",
+        nargs="+",
+        required=True,
+        help="ID(s) del dashboard en Looker: numérico (42) o slug (8LWxYgffFEbPplvemGZcpD). Se pueden pasar varios separados por espacio.",
+    )
+    parser.add_argument("--tenant_name", required=True, help="Nombre del tenant (ej: tenant_1)")
+    parser.add_argument("--tenant_dir", default=None, help="Ruta al proyecto del tenant")
+    parser.add_argument("--base_dashboard", default=None,
+                        help="Nombre del dashboard base que extiende (si aplica). Si no se indica, se intenta detectar automáticamente.")
+    parser.add_argument("--base_repo_owner", default=None,
+                        help="Owner del repo base en GitHub (override del manifest)")
+    parser.add_argument("--base_repo_name", default=None,
+                        help="Nombre del repo base en GitHub (override del manifest)")
+    parser.add_argument("--dry_run", action="store_true", help="Muestra resultado sin guardar")
+
+    args = parser.parse_args()
+
+    # Resolver directorio del tenant
+    if args.tenant_dir:
+        tenant_dir = os.path.abspath(args.tenant_dir)
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        tenant_dir = os.path.join(script_dir, "..", "..", args.tenant_name)
+    tenant_dir = os.path.abspath(tenant_dir)
+
+    dashboards_dir = os.path.join(tenant_dir, "dashboards")
+    manifest_path = os.path.join(tenant_dir, "manifest.lkml")
+
+    print(f"📁 Tenant dir: {tenant_dir}")
+
+    # Conectar con Looker API
+    print("📡 Conectando con Looker API...")
+    sdk = looker_sdk.init40()
+
+    # Procesar cada dashboard
+    results = []
+    for dashboard_id in args.dashboard_id:
+        result = process_dashboard(sdk, dashboard_id, args, dashboards_dir, manifest_path, tenant_dir)
+        results.append(result)
+
+    # Resumen final
+    print(f"\n{'='*60}")
+    print(f"🏁 Procesados {len(results)} dashboard(s):")
+    for r in results:
+        extend_tag = " (extends)" if r["is_extend"] else " (standalone)"
+        print(f"   - [{r['action']}] {r['dashboard_name']} (ID: {r['dashboard_id']}){extend_tag} → {r['file_path']}")
+
     # GitHub Actions outputs
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:
         with open(github_output, "a") as f:
-            f.write(f"dashboard_name={dashboard_name}\n")
-            f.write(f"file_path={filepath}\n")
-            f.write(f"action={action}\n")
-            f.write(f"is_extend={'true' if base_dashboard_name else 'false'}\n")
+            f.write(f"dashboard_names={json.dumps([r['dashboard_name'] for r in results])}\n")
+            f.write(f"file_paths={json.dumps([r['file_path'] for r in results])}\n")
+            f.write(f"actions={json.dumps([r['action'] for r in results])}\n")
+            f.write(f"dashboard_count={len(results)}\n")
 
 
 if __name__ == "__main__":
